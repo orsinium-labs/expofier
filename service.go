@@ -67,27 +67,27 @@ func NewService() *Service {
 }
 
 // Send the message in background, wait for its status to update, and resolve the Promise.
-func (d *Service) Send(ctx context.Context, msg Message) *Promise {
+func (s *Service) Send(ctx context.Context, msg Message) *Promise {
 	job := sendJob{
 		promise: &Promise{},
 		msg:     msg,
 	}
 	select {
-	case d.sendJobs <- job:
+	case s.sendJobs <- job:
 		return job.promise
 	case <-ctx.Done():
 		return nil
 	}
 }
 
-func (d *Service) Run(ctx context.Context) {
-	if !d.constructed {
+func (s *Service) Run(ctx context.Context) {
+	if !s.constructed {
 		panic("Service must be constructed using NewService")
 	}
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	go d.runSender(ctx, wg)
-	go d.runResolver(ctx)
+	go s.runSender(ctx, wg)
+	go s.runResolver(ctx)
 	wg.Wait()
 }
 
@@ -117,12 +117,12 @@ func (d *Service) runSender(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (d *Service) sendChunk(ctx context.Context, chunk []sendJob) {
+func (s *Service) sendChunk(ctx context.Context, chunk []sendJob) {
 	msgs := make([]Message, 0, len(chunk))
 	for _, job := range chunk {
 		msgs = append(msgs, job.msg)
 	}
-	resps, err := d.Client.SendMessages(ctx, msgs)
+	resps, err := s.Client.SendMessages(ctx, msgs)
 	if err != nil {
 		for _, job := range chunk {
 			job.promise.Resolve(err)
@@ -140,30 +140,30 @@ func (d *Service) sendChunk(ctx context.Context, chunk []sendJob) {
 			ticket:  resp.Ticket,
 		}
 		select {
-		case d.receiptJobs <- rJob:
+		case s.receiptJobs <- rJob:
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (d *Service) runResolver(ctx context.Context) {
-	ticker := time.NewTicker(d.ResolveChunk)
+func (s *Service) runResolver(ctx context.Context) {
+	ticker := time.NewTicker(s.ResolveChunk)
 	chunk := make([]receiptJob, 0, 300)
 	for {
 		select {
-		case job := <-d.receiptJobs:
+		case job := <-s.receiptJobs:
 			if len(chunk) == 0 {
-				ticker.Reset(d.ResolveChunk)
+				ticker.Reset(s.ResolveChunk)
 			}
 			chunk = append(chunk, job)
 			if len(chunk) >= 300 {
-				d.resolveChunk(ctx, chunk)
+				s.resolveChunk(ctx, chunk)
 				chunk = chunk[:0]
 			}
 		case <-ticker.C:
 			if len(chunk) > 0 {
-				d.resolveChunk(ctx, chunk)
+				s.resolveChunk(ctx, chunk)
 				chunk = chunk[:0]
 			}
 		case <-ctx.Done():
@@ -172,12 +172,12 @@ func (d *Service) runResolver(ctx context.Context) {
 	}
 }
 
-func (d *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
+func (s *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 	tickets := make([]Ticket, 0, len(chunk))
 	for _, job := range chunk {
 		if job.tried != nil {
-			now := d.Now()
-			nextTry := job.tried.Add(d.ResolveInterval)
+			now := s.Now()
+			nextTry := job.tried.Add(s.ResolveInterval)
 			wait := nextTry.Sub(now)
 			if wait > 0 {
 				time.Sleep(wait)
@@ -185,7 +185,7 @@ func (d *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 		}
 		tickets = append(tickets, job.ticket)
 	}
-	resps, err := d.Client.FetchReceipts(ctx, tickets)
+	resps, err := s.Client.FetchReceipts(ctx, tickets)
 	if err != nil {
 		for _, job := range chunk {
 			job.promise.Resolve(err)
@@ -198,10 +198,10 @@ func (d *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 			job.promise.Resolve(receipt.Error)
 			continue
 		}
-		now := d.Now()
+		now := s.Now()
 		job.tried = &now
 		select {
-		case d.receiptJobs <- job:
+		case s.receiptJobs <- job:
 		case <-ctx.Done():
 			return
 		}

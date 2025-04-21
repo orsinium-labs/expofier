@@ -176,7 +176,7 @@ func (c Client) FetchReceipts(
 		return nil, fmt.Errorf("serialize tickets: %w", err)
 	}
 	body := bytes.NewReader(raw)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

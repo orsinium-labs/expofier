@@ -12,6 +12,17 @@ type Promise struct {
 	cb   func(error)
 }
 
+// Wait for the Promise to be Done.
+func (p *Promise) Wait(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-p.done:
+	case <-ctx.Done():
+	}
+}
+
 // Channel that will be closed when the Promise is done.
 func (p *Promise) Done() <-chan struct{} {
 	return p.done
@@ -52,14 +63,49 @@ type receiptJob struct {
 }
 
 type Deliverer struct {
-	client       Client
-	sendJobs     chan sendJob
-	receiptJobs  chan receiptJob
-	SendChunk    time.Duration
+	// The underlying client to use for sending requests.
+	Client *Client
+
+	// The function returning the current time.
+	//
+	// Default: [time.Now]
+	Now func() time.Time
+
+	// For how long to aggregate messages into chunks.
+	//
+	// In other words, it's the time since calling Send for the first message
+	// in a chunk to sending the whole chunk to the server.
+	//
+	// Default: 1 second.
+	SendChunk time.Duration
+
+	// For how long to aggregate tickets into chunks.
+	//
+	// Default: 1 second.
 	ResolveChunk time.Duration
-	Now          func() time.Time
+
+	// How often to re-check the status of a ticket.
+	//
+	// Default: 1 second.
+	ResolveInterval time.Duration
+
+	sendJobs    chan sendJob
+	receiptJobs chan receiptJob
 }
 
+func NewDeliverer() *Deliverer {
+	return &Deliverer{
+		Client:          &Client{},
+		sendJobs:        make(chan sendJob),
+		receiptJobs:     make(chan receiptJob),
+		SendChunk:       time.Second,
+		ResolveChunk:    time.Second,
+		ResolveInterval: time.Second,
+		Now:             time.Now,
+	}
+}
+
+// Send the message in background, wait for its status to update, and resolve the Promise.
 func (d *Deliverer) Send(ctx context.Context, msg Message) *Promise {
 	job := sendJob{
 		promise: &Promise{},
@@ -75,9 +121,9 @@ func (d *Deliverer) Send(ctx context.Context, msg Message) *Promise {
 
 func (d *Deliverer) Run(ctx context.Context) {
 	wg := &sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(1)
 	go d.runSender(ctx, wg)
-	go d.runResolver(ctx, wg)
+	go d.runResolver(ctx)
 	wg.Wait()
 }
 
@@ -112,7 +158,7 @@ func (d *Deliverer) sendChunk(ctx context.Context, chunk []sendJob) {
 	for _, job := range chunk {
 		msgs = append(msgs, job.msg)
 	}
-	resps, err := d.client.SendMessages(ctx, msgs)
+	resps, err := d.Client.SendMessages(ctx, msgs)
 	if err != nil {
 		for _, job := range chunk {
 			job.promise.Resolve(err)
@@ -137,8 +183,7 @@ func (d *Deliverer) sendChunk(ctx context.Context, chunk []sendJob) {
 	}
 }
 
-func (d *Deliverer) runResolver(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (d *Deliverer) runResolver(ctx context.Context) {
 	ticker := time.NewTicker(d.ResolveChunk)
 	chunk := make([]receiptJob, 0, 300)
 	for {
@@ -166,9 +211,17 @@ func (d *Deliverer) runResolver(ctx context.Context, wg *sync.WaitGroup) {
 func (d *Deliverer) resolveChunk(ctx context.Context, chunk []receiptJob) {
 	tickets := make([]Ticket, 0, len(chunk))
 	for _, job := range chunk {
+		if job.tried != nil {
+			now := d.Now()
+			nextTry := job.tried.Add(d.ResolveInterval)
+			wait := nextTry.Sub(now)
+			if wait > 0 {
+				time.Sleep(wait)
+			}
+		}
 		tickets = append(tickets, job.ticket)
 	}
-	resps, err := d.client.FetchReceipts(ctx, tickets)
+	resps, err := d.Client.FetchReceipts(ctx, tickets)
 	if err != nil {
 		for _, job := range chunk {
 			job.promise.Resolve(err)

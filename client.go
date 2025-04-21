@@ -139,7 +139,7 @@ func (c Client) FetchReceipt(ctx context.Context, ticket Ticket) *Receipt {
 }
 
 func (c Client) FetchReceipts(ctx context.Context, tickets []Ticket) (map[Ticket]Receipt, error) {
-	if len(tickets) > 100 {
+	if len(tickets) > 300 {
 		return nil, ErrTooManyTickets
 	}
 

@@ -17,4 +17,5 @@ var (
 	ErrInvalidTicketCount  = errors.New("the number of tickets doesn't match the number of messages")
 	ErrBadRequest          = errors.New("invalid request")
 	ErrUnknown             = errors.New("unknown error")
+	ErrExpired             = errors.New("timed out delivering message")
 )

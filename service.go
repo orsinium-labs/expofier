@@ -21,6 +21,8 @@ type receiptJob struct {
 	tried *time.Time
 }
 
+// The background service taking care of delivering notifications, batching requests,
+// retries, resolving promises, etc.
 type Service struct {
 	// The underlying client to use for sending requests.
 	Client *Client
@@ -55,7 +57,7 @@ type Service struct {
 
 func NewService() *Service {
 	return &Service{
-		Client:          &Client{},
+		Client:          NewClient(),
 		sendJobs:        make(chan sendJob),
 		receiptJobs:     make(chan receiptJob),
 		SendChunk:       time.Second,
@@ -80,6 +82,9 @@ func (s *Service) Send(ctx context.Context, msg Message) *Promise {
 	}
 }
 
+// Start the background service.
+//
+// Exits when the context is cancelled.
 func (s *Service) Run(ctx context.Context) {
 	if !s.constructed {
 		panic("Service must be constructed using NewService")

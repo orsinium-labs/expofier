@@ -23,6 +23,10 @@ type Client struct {
 	AccessToken string
 }
 
+func NewClient() *Client {
+	return &Client{}
+}
+
 type Ticket string
 
 type Resp struct {
@@ -133,6 +137,11 @@ type Receipt struct {
 	Error error
 }
 
+// Check the delivery status for a push notification.
+//
+// Returns nil if the message is not delivered yet.
+// Returns the default Receipt (with Error == nil) is the message is
+// successfully delivered.
 func (c Client) FetchReceipt(ctx context.Context, ticket Ticket) *Receipt {
 	rs, err := c.FetchReceipts(ctx, []Ticket{ticket})
 	if err != nil {
@@ -145,7 +154,10 @@ func (c Client) FetchReceipt(ctx context.Context, ticket Ticket) *Receipt {
 	return &r
 }
 
-func (c Client) FetchReceipts(ctx context.Context, tickets []Ticket) (map[Ticket]Receipt, error) {
+func (c Client) FetchReceipts(
+	ctx context.Context,
+	tickets []Ticket,
+) (map[Ticket]Receipt, error) {
 	if len(tickets) > 300 {
 		return nil, ErrTooManyTickets
 	}

@@ -54,13 +54,17 @@ type messageResponse struct {
 }
 
 func (c Client) SendMessage(ctx context.Context, msg Message) (Ticket, error) {
-	resp := c.SendMessages(ctx, []Message{msg})[0]
+	resps, err := c.SendMessages(ctx, []Message{msg})
+	if err != nil {
+		return "", err
+	}
+	resp := resps[0]
 	return resp.Ticket, resp.Error
 }
 
-func (c Client) SendMessages(ctx context.Context, msgs []Message) []Resp {
+func (c Client) SendMessages(ctx context.Context, msgs []Message) ([]Resp, error) {
 	if len(msgs) > 100 {
-		return repeat(msgs, ErrTooManyMessages)
+		return nil, ErrTooManyMessages
 	}
 
 	// Send request.
@@ -72,12 +76,12 @@ func (c Client) SendMessages(ctx context.Context, msgs []Message) []Resp {
 	url := baseURL + "/--/api/v2/push/send"
 	raw, err := json.Marshal(msgs)
 	if err != nil {
-		return repeat(msgs, fmt.Errorf("serialize messages: %w", err))
+		return nil, fmt.Errorf("serialize messages: %w", err)
 	}
 	body := bytes.NewReader(raw)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
-		return repeat(msgs, fmt.Errorf("create request: %w", err))
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Add("Content-Type", "application/json")
 	if c.AcessToken != "" {
@@ -85,27 +89,27 @@ func (c Client) SendMessages(ctx context.Context, msgs []Message) []Resp {
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return repeat(msgs, fmt.Errorf("send request: %w", err))
+		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Handle response.
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return repeat(msgs, ErrTooManyRequests)
+		return nil, ErrTooManyRequests
 	}
 	if resp.StatusCode >= 500 {
-		return repeat(msgs, ErrServerError)
+		return nil, ErrServerError
 	}
 	var r *sendResp
 	err = json.NewDecoder(resp.Body).Decode(&r)
 	if err != nil {
-		return repeat(msgs, fmt.Errorf("decode response: %w", err))
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	if len(r.Errors) > 0 {
-		return repeat(msgs, ErrBadRequest)
+		return nil, ErrBadRequest
 	}
 	if len(r.Data) != len(msgs) {
-		return repeat(msgs, ErrInvalidTicketCount)
+		return nil, ErrInvalidTicketCount
 	}
 	resps := make([]Resp, 0, len(msgs))
 	for _, rawResp := range r.Data {
@@ -115,7 +119,7 @@ func (c Client) SendMessages(ctx context.Context, msgs []Message) []Resp {
 		}
 		resps = append(resps, resp)
 	}
-	return resps
+	return resps, nil
 }
 
 type Receipt struct {

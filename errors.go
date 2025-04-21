@@ -11,6 +11,7 @@ var (
 	ErrNoRecipients        = errors.New("message has no recipients")
 	ErrEmptyToken          = errors.New("push token is empty")
 	ErrTooManyMessages     = errors.New("too many messages in a single request")
+	ErrTooManyTickets      = errors.New("too many tickets in a single request")
 	ErrServerError         = errors.New("server error")
 	ErrTooManyRequests     = errors.New("too many requests")
 	ErrInvalidTicketCount  = errors.New("the number of tickets doesn't match the number of messages")

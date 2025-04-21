@@ -34,9 +34,14 @@ func Flatten(resps []Resp) ([]Ticket, error) {
 	return tickets, nil
 }
 
-type response struct {
+type sendResp struct {
 	Data   []messageResponse `json:"data"`
 	Errors []any             `json:"errors"`
+}
+
+type receiptsResp struct {
+	Data   map[Ticket]messageResponse `json:"data"`
+	Errors []any                      `json:"errors"`
 }
 
 type messageResponse struct {
@@ -48,15 +53,17 @@ type messageResponse struct {
 	} `json:"details"`
 }
 
-func (c Client) Send(ctx context.Context, msg Message) (Ticket, error) {
-	resp := c.SendMany(ctx, []Message{msg})[0]
+func (c Client) SendMessage(ctx context.Context, msg Message) (Ticket, error) {
+	resp := c.SendMessages(ctx, []Message{msg})[0]
 	return resp.Ticket, resp.Error
 }
 
-func (c Client) SendMany(ctx context.Context, msgs []Message) []Resp {
+func (c Client) SendMessages(ctx context.Context, msgs []Message) []Resp {
 	if len(msgs) > 100 {
 		return repeat(msgs, ErrTooManyMessages)
 	}
+
+	// Send request.
 	baseURL := c.BaseURL
 	if baseURL == "" {
 		baseURL = "https://exp.host"
@@ -81,13 +88,15 @@ func (c Client) SendMany(ctx context.Context, msgs []Message) []Resp {
 		return repeat(msgs, fmt.Errorf("send request: %w", err))
 	}
 	defer resp.Body.Close()
+
+	// Handle response.
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return repeat(msgs, ErrTooManyRequests)
 	}
 	if resp.StatusCode >= 500 {
 		return repeat(msgs, ErrServerError)
 	}
-	var r *response
+	var r *sendResp
 	err = json.NewDecoder(resp.Body).Decode(&r)
 	if err != nil {
 		return repeat(msgs, fmt.Errorf("decode response: %w", err))
@@ -107,6 +116,81 @@ func (c Client) SendMany(ctx context.Context, msgs []Message) []Resp {
 		resps = append(resps, resp)
 	}
 	return resps
+}
+
+type Receipt struct {
+	Error error
+}
+
+func (c Client) FetchReceipt(ctx context.Context, ticket Ticket) *Receipt {
+	rs, err := c.FetchReceipts(ctx, []Ticket{ticket})
+	if err != nil {
+		return &Receipt{Error: err}
+	}
+	r, found := rs[ticket]
+	if !found {
+		return nil
+	}
+	return &r
+}
+
+func (c Client) FetchReceipts(ctx context.Context, tickets []Ticket) (map[Ticket]Receipt, error) {
+	if len(tickets) > 100 {
+		return nil, ErrTooManyTickets
+	}
+
+	// Send request.
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = "https://exp.host"
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	url := baseURL + "/--/api/v2/push/getReceipts"
+	raw, err := json.Marshal(struct {
+		IDs []Ticket `json:"ids"`
+	}{tickets})
+	if err != nil {
+		return nil, fmt.Errorf("serialize tickets: %w", err)
+	}
+	body := bytes.NewReader(raw)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Add("Content-Type", "application/json")
+	if c.AcessToken != "" {
+		req.Header.Add("Authorization", "Bearer "+c.AcessToken)
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+
+	// Handle response
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrTooManyRequests
+	}
+	if resp.StatusCode >= 500 {
+		return nil, ErrServerError
+	}
+	var r *receiptsResp
+	err = json.NewDecoder(resp.Body).Decode(&r)
+	if err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if len(r.Errors) > 0 {
+		return nil, ErrBadRequest
+	}
+	receipts := make(map[Ticket]Receipt, len(r.Data))
+	for ticket, rawResp := range r.Data {
+		receipt := Receipt{}
+		if rawResp.Status != "ok" {
+			receipt.Error = parseErr(rawResp)
+		}
+		receipts[ticket] = receipt
+	}
+	return receipts, nil
 }
 
 func repeat(msgs []Message, err error) []Resp {

@@ -11,9 +11,9 @@ import (
 )
 
 type Client struct {
-	Client     http.Client
-	BaseURL    string
-	AcessToken string
+	Client      http.Client
+	BaseURL     string
+	AccessToken string
 }
 
 type Ticket string
@@ -84,8 +84,8 @@ func (c Client) SendMessages(ctx context.Context, msgs []Message) ([]Resp, error
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Add("Content-Type", "application/json")
-	if c.AcessToken != "" {
-		req.Header.Add("Authorization", "Bearer "+c.AcessToken)
+	if c.AccessToken != "" {
+		req.Header.Add("Authorization", "Bearer "+c.AccessToken)
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
@@ -162,8 +162,8 @@ func (c Client) FetchReceipts(ctx context.Context, tickets []Ticket) (map[Ticket
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Add("Content-Type", "application/json")
-	if c.AcessToken != "" {
-		req.Header.Add("Authorization", "Bearer "+c.AcessToken)
+	if c.AccessToken != "" {
+		req.Header.Add("Authorization", "Bearer "+c.AccessToken)
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
@@ -195,15 +195,6 @@ func (c Client) FetchReceipts(ctx context.Context, tickets []Ticket) (map[Ticket
 		receipts[ticket] = receipt
 	}
 	return receipts, nil
-}
-
-func repeat(msgs []Message, err error) []Resp {
-	resp := Resp{Error: err}
-	resps := make([]Resp, 0, len(msgs))
-	for range len(msgs) {
-		resps = append(resps, resp)
-	}
-	return resps
 }
 
 func parseErr(r messageResponse) error {

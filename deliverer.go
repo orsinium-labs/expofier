@@ -2,6 +2,7 @@ package expofier
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -56,6 +57,7 @@ type Deliverer struct {
 	receiptJobs  chan receiptJob
 	SendChunk    time.Duration
 	ResolveChunk time.Duration
+	Now          func() time.Time
 }
 
 func (d *Deliverer) Send(ctx context.Context, msg Message) *Promise {
@@ -72,10 +74,15 @@ func (d *Deliverer) Send(ctx context.Context, msg Message) *Promise {
 }
 
 func (d *Deliverer) Run(ctx context.Context) {
-	d.runSender(ctx)
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go d.runSender(ctx, wg)
+	go d.runResolver(ctx, wg)
+	wg.Wait()
 }
 
-func (d *Deliverer) runSender(ctx context.Context) {
+func (d *Deliverer) runSender(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	ticker := time.NewTicker(d.SendChunk)
 	chunk := make([]sendJob, 0, 100)
 	for {
@@ -124,6 +131,60 @@ func (d *Deliverer) sendChunk(ctx context.Context, chunk []sendJob) {
 		}
 		select {
 		case d.receiptJobs <- rJob:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (d *Deliverer) runResolver(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.NewTicker(d.ResolveChunk)
+	chunk := make([]receiptJob, 0, 300)
+	for {
+		select {
+		case job := <-d.receiptJobs:
+			if len(chunk) == 0 {
+				ticker.Reset(d.ResolveChunk)
+			}
+			chunk = append(chunk, job)
+			if len(chunk) >= 300 {
+				d.resolveChunk(ctx, chunk)
+				chunk = chunk[:0]
+			}
+		case <-ticker.C:
+			if len(chunk) > 0 {
+				d.resolveChunk(ctx, chunk)
+				chunk = chunk[:0]
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (d *Deliverer) resolveChunk(ctx context.Context, chunk []receiptJob) {
+	tickets := make([]Ticket, 0, len(chunk))
+	for _, job := range chunk {
+		tickets = append(tickets, job.ticket)
+	}
+	resps, err := d.client.FetchReceipts(ctx, tickets)
+	if err != nil {
+		for _, job := range chunk {
+			job.promise.Resolve(err)
+		}
+		return
+	}
+	for _, job := range chunk {
+		receipt, resolved := resps[job.ticket]
+		if resolved {
+			job.promise.Resolve(receipt.Error)
+			continue
+		}
+		now := d.Now()
+		job.tried = &now
+		select {
+		case d.receiptJobs <- job:
 		case <-ctx.Done():
 			return
 		}

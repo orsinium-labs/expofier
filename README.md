@@ -33,7 +33,7 @@ if err != nil {
 }
 
 // Check message delivery status:
-receipt := client.FetchReceipt(ctx, msg)
+receipt := client.FetchReceipt(ctx, ticket)
 if receipt != nil {
     if receipt.Error != nil {
         return fmt.Errorf("deliver message: %w", err)

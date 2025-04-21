@@ -71,8 +71,10 @@ func NewService() *Service {
 // Send the message in background, wait for its status to update, and resolve the Promise.
 func (s *Service) Send(ctx context.Context, msg Message) *Promise {
 	job := sendJob{
-		promise: &Promise{},
-		msg:     msg,
+		promise: &Promise{
+			done: make(chan struct{}),
+		},
+		msg: msg,
 	}
 	select {
 	case s.sendJobs <- job:

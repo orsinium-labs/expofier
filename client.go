@@ -11,8 +11,15 @@ import (
 )
 
 type Client struct {
-	Client      http.Client
-	BaseURL     string
+	// The underlying client to use for HTTP requests.
+	Client http.Client
+
+	// The base API URL.
+	//
+	// Default: "https://exp.host"
+	BaseURL string
+
+	// The Bearer token to send in all HTTP requests.
 	AccessToken string
 }
 
@@ -157,7 +164,7 @@ func (c Client) FetchReceipts(ctx context.Context, tickets []Ticket) (map[Ticket
 		return nil, fmt.Errorf("serialize tickets: %w", err)
 	}
 	body := bytes.NewReader(raw)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

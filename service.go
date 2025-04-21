@@ -14,10 +14,14 @@ type sendJob struct {
 type receiptJob struct {
 	promise *Promise
 	ticket  Ticket
-	tried   *time.Time
+
+	// The last time when we tried to resolve the ticket.
+	//
+	// If nil, we haven't tried yet.
+	tried *time.Time
 }
 
-type Deliverer struct {
+type Service struct {
 	// The underlying client to use for sending requests.
 	Client *Client
 
@@ -46,10 +50,11 @@ type Deliverer struct {
 
 	sendJobs    chan sendJob
 	receiptJobs chan receiptJob
+	constructed bool
 }
 
-func NewDeliverer() *Deliverer {
-	return &Deliverer{
+func NewService() *Service {
+	return &Service{
 		Client:          &Client{},
 		sendJobs:        make(chan sendJob),
 		receiptJobs:     make(chan receiptJob),
@@ -57,11 +62,12 @@ func NewDeliverer() *Deliverer {
 		ResolveChunk:    time.Second,
 		ResolveInterval: time.Second,
 		Now:             time.Now,
+		constructed:     true,
 	}
 }
 
 // Send the message in background, wait for its status to update, and resolve the Promise.
-func (d *Deliverer) Send(ctx context.Context, msg Message) *Promise {
+func (d *Service) Send(ctx context.Context, msg Message) *Promise {
 	job := sendJob{
 		promise: &Promise{},
 		msg:     msg,
@@ -74,7 +80,10 @@ func (d *Deliverer) Send(ctx context.Context, msg Message) *Promise {
 	}
 }
 
-func (d *Deliverer) Run(ctx context.Context) {
+func (d *Service) Run(ctx context.Context) {
+	if !d.constructed {
+		panic("Service must be constructed using NewService")
+	}
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go d.runSender(ctx, wg)
@@ -82,7 +91,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-func (d *Deliverer) runSender(ctx context.Context, wg *sync.WaitGroup) {
+func (d *Service) runSender(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	ticker := time.NewTicker(d.SendChunk)
 	chunk := make([]sendJob, 0, 100)
@@ -108,7 +117,7 @@ func (d *Deliverer) runSender(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (d *Deliverer) sendChunk(ctx context.Context, chunk []sendJob) {
+func (d *Service) sendChunk(ctx context.Context, chunk []sendJob) {
 	msgs := make([]Message, 0, len(chunk))
 	for _, job := range chunk {
 		msgs = append(msgs, job.msg)
@@ -138,7 +147,7 @@ func (d *Deliverer) sendChunk(ctx context.Context, chunk []sendJob) {
 	}
 }
 
-func (d *Deliverer) runResolver(ctx context.Context) {
+func (d *Service) runResolver(ctx context.Context) {
 	ticker := time.NewTicker(d.ResolveChunk)
 	chunk := make([]receiptJob, 0, 300)
 	for {
@@ -163,7 +172,7 @@ func (d *Deliverer) runResolver(ctx context.Context) {
 	}
 }
 
-func (d *Deliverer) resolveChunk(ctx context.Context, chunk []receiptJob) {
+func (d *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 	tickets := make([]Ticket, 0, len(chunk))
 	for _, job := range chunk {
 		if job.tried != nil {

@@ -36,6 +36,14 @@ func (p *Promise) Err() error {
 // Register function to be called when Promise is Done.
 func (p *Promise) Callback(cb func(error)) {
 	p.cb = cb
+	// The callback might be set after Promise is already done.
+	// There is still a race-condition which might cause callback
+	// to be executed twice.
+	select {
+	case <-p.done:
+		p.cb(p.err)
+	default:
+	}
 }
 
 // Set the error (if not nil) and mark the Promise as Done.

@@ -80,7 +80,8 @@ func (s *Service) Send(ctx context.Context, msg Message) *Promise {
 	case s.sendJobs <- job:
 		return job.promise
 	case <-ctx.Done():
-		return nil
+		job.promise.Resolve(ctx.Err())
+		return job.promise
 	}
 }
 

@@ -2,6 +2,7 @@ package expofier
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -126,6 +127,9 @@ func (d *Service) runSender(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *Service) sendChunk(ctx context.Context, chunk []sendJob) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	msgs := make([]Message, 0, len(chunk))
 	for _, job := range chunk {
 		msgs = append(msgs, job.msg)
@@ -150,7 +154,8 @@ func (s *Service) sendChunk(ctx context.Context, chunk []sendJob) {
 		select {
 		case s.receiptJobs <- rJob:
 		case <-ctx.Done():
-			return
+			err := fmt.Errorf("send receipt job: %w", ctx.Err())
+			job.promise.Resolve(err)
 		}
 	}
 }
@@ -200,6 +205,7 @@ func (s *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 		}
 		return
 	}
+	unresolved := make([]receiptJob, 0, len(chunk)-len(resps))
 	for _, job := range chunk {
 		receipt, resolved := resps[job.ticket]
 		if resolved {
@@ -208,6 +214,14 @@ func (s *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 		}
 		now := s.Now()
 		job.tried = &now
+		unresolved = append(unresolved, job)
+	}
+	go s.rescheduleTickets(ctx, unresolved)
+}
+
+// Put back into queue unresolved receipt jobs.
+func (s *Service) rescheduleTickets(ctx context.Context, chunk []receiptJob) {
+	for _, job := range chunk {
 		select {
 		case s.receiptJobs <- job:
 		case <-ctx.Done():

@@ -15,11 +15,6 @@ type sendJob struct {
 type receiptJob struct {
 	promise *Promise
 	ticket  Ticket
-
-	// The last time when we tried to resolve the ticket.
-	//
-	// If nil, we haven't tried yet.
-	tried *time.Time
 }
 
 // The background service taking care of delivering notifications, batching requests,
@@ -27,11 +22,6 @@ type receiptJob struct {
 type Service struct {
 	// The underlying client to use for sending requests.
 	Client *Client
-
-	// The function returning the current time.
-	//
-	// Default: [time.Now]
-	Now func() time.Time
 
 	// For how long to aggregate messages into chunks.
 	//
@@ -64,7 +54,6 @@ func NewService() *Service {
 		SendChunk:       time.Second,
 		ResolveChunk:    time.Second,
 		ResolveInterval: time.Second,
-		Now:             time.Now,
 		constructed:     true,
 	}
 }
@@ -188,14 +177,6 @@ func (s *Service) runResolver(ctx context.Context) {
 func (s *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 	tickets := make([]Ticket, 0, len(chunk))
 	for _, job := range chunk {
-		if job.tried != nil {
-			now := s.Now()
-			nextTry := job.tried.Add(s.ResolveInterval)
-			wait := nextTry.Sub(now)
-			if wait > 0 {
-				time.Sleep(wait)
-			}
-		}
 		tickets = append(tickets, job.ticket)
 	}
 	resps, err := s.Client.FetchReceipts(ctx, tickets)
@@ -212,8 +193,6 @@ func (s *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 			job.promise.Resolve(receipt.Error)
 			continue
 		}
-		now := s.Now()
-		job.tried = &now
 		unresolved = append(unresolved, job)
 	}
 	go s.rescheduleTickets(ctx, unresolved)
@@ -221,6 +200,7 @@ func (s *Service) resolveChunk(ctx context.Context, chunk []receiptJob) {
 
 // Put back into queue unresolved receipt jobs.
 func (s *Service) rescheduleTickets(ctx context.Context, chunk []receiptJob) {
+	time.Sleep(s.ResolveInterval)
 	for _, job := range chunk {
 		select {
 		case s.receiptJobs <- job:
